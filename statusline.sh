@@ -284,9 +284,13 @@ except: pass
             now=$(date +%s)
             remain_secs=$((FIVE_HR_RESET - now))
             if [ "$remain_secs" -gt 0 ]; then
-                local rh=$((remain_secs / 3600))
-                local rm=$(( (remain_secs % 3600) / 60 ))
-                [ "$rh" -gt 0 ] && reset_str=" ${DM}resets ${rh}h${rm}m${D}" || reset_str=" ${DM}resets ${rm}m${D}"
+                local reset_time
+                reset_time=$(python3 -c "
+from datetime import datetime
+dt = datetime.fromtimestamp($FIVE_HR_RESET)
+print(dt.strftime('%H:%M %a') + f' {dt.day} ' + dt.strftime('%b'))
+" 2>/dev/null)
+                [ -n "$reset_time" ] && reset_str=" ${DM}resets at ${reset_time}${D}"
             fi
         fi
         line2+=" ${DM}|${D} 5h: ${usage_color}${FIVE_HR_PCT}%${D}${reset_str}"
@@ -304,26 +308,25 @@ except: pass
             now=$(date +%s)
             remain_secs=$((SEVEN_DAY_RESET - now))
             if [ "$remain_secs" -gt 0 ]; then
-                local rd=$((remain_secs / 86400))
-                local rh=$(( (remain_secs % 86400) / 3600 ))
-                [ "$rd" -gt 0 ] && w_reset_str=" ${DM}resets ${rd}d${rh}h${D}" || w_reset_str=" ${DM}resets ${rh}h${D}"
+                local reset_time
+                reset_time=$(python3 -c "
+from datetime import datetime
+dt = datetime.fromtimestamp($SEVEN_DAY_RESET)
+day = dt.day
+suffix = 'th' if 11 <= day <= 13 else {1:'st',2:'nd',3:'rd'}.get(day%10,'th')
+print(dt.strftime('%a ') + f'{day}{suffix} ' + dt.strftime('%b %H:%M'))
+" 2>/dev/null)
+                [ -n "$reset_time" ] && w_reset_str=" ${DM}resets at ${reset_time}${D}"
             fi
         fi
         line2+=" ${DM}|${D} 7d: ${w_color}${SEVEN_DAY_PCT}%${D}${w_reset_str}"
     fi
 
-    # Cache hit ratio (shows prompt caching efficiency)
-    local total_input=$((INPUT_TOKENS + CACHE_CREATION + CACHE_READ))
-    if [ "$total_input" -gt 0 ] && [ "$CACHE_READ" -gt 0 ]; then
-        local cache_pct=$((CACHE_READ * 100 / total_input))
-        line2+=" ${DM}|${D} 💾 ${W}${cache_pct}%${D}"
-    fi
-
-    # Output tokens
-    if [ "$OUTPUT_TOKENS" -gt 0 ]; then
-        local out_fmt
-        out_fmt=$(format_tokens "$OUTPUT_TOKENS")
-        line2+=" ${DM}↑${out_fmt}${D}"
+    # Session cost
+    if command -v bc >/dev/null 2>&1 || [ "$TOTAL_COST" != "0" ]; then
+        local cost_fmt
+        cost_fmt=$(format_cost "$TOTAL_COST")
+        line2+=" ${DM}|${D} ☘️ ${W}\$${cost_fmt}${D}"
     fi
 
 
