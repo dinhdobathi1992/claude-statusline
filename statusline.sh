@@ -25,7 +25,9 @@ parse_context() {
 
     # Model
     MODEL=$(echo "$json" | grep -o '"display_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*:.*"\([^"]*\)"/\1/' | head -1)
-    MODEL_ID=$(echo "$json" | grep -o '"id"[[:space:]]*:[[:space:]]*"claude[^"]*"' | sed 's/.*:.*"\([^"]*\)"/\1/' | head -1)
+    MODEL_ID=$(echo "$json" | grep -o '"model_id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*:.*"\([^"]*\)"/\1/' | head -1)
+    # Fallback to "id" field matching claude-* pattern
+    [ -z "$MODEL_ID" ] && MODEL_ID=$(echo "$json" | grep -o '"id"[[:space:]]*:[[:space:]]*"claude[^"]*"' | sed 's/.*:.*"\([^"]*\)"/\1/' | head -1)
 
     # Context window (current_usage = tokens from last API call)
     INPUT_TOKENS=$(echo "$json" | grep -o '"input_tokens"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//' | head -1)
@@ -42,8 +44,20 @@ parse_context() {
     CTX_PCT="${CTX_PCT:-0}"
 
     MAX_TOKENS=$(echo "$json" | grep -o '"context_window_size"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//' | head -1)
-    MAX_TOKENS="${MAX_TOKENS:-200000}"
-    CONVERSATION_TOKENS=$((INPUT_TOKENS + CACHE_CREATION + CACHE_READ))
+    # Detect 1M context models if context_window_size not provided
+    if [ -z "$MAX_TOKENS" ]; then
+        if echo "$MODEL $MODEL_ID" | grep -qiE '1m|1000k'; then
+            MAX_TOKENS=1000000
+        else
+            MAX_TOKENS=200000
+        fi
+    fi
+    # Derive used tokens from percentage and max to stay consistent with the bar
+    if [ "$CTX_PCT" -gt 0 ]; then
+        CONVERSATION_TOKENS=$((MAX_TOKENS * CTX_PCT / 100))
+    else
+        CONVERSATION_TOKENS=$((INPUT_TOKENS + CACHE_CREATION + CACHE_READ))
+    fi
 
     # Native cost + duration (provided directly by Claude Code)
     TOTAL_COST=$(echo "$json" | grep -o '"total_cost_usd"[[:space:]]*:[[:space:]]*[0-9.]*' | sed 's/.*:[[:space:]]*//' | head -1)
@@ -56,6 +70,29 @@ parse_context() {
     LINES_REMOVED=$(echo "$json" | grep -o '"total_lines_removed"[[:space:]]*:[[:space:]]*[0-9]*' | sed 's/.*:[[:space:]]*//' | head -1)
     LINES_ADDED="${LINES_ADDED:-0}"
     LINES_REMOVED="${LINES_REMOVED:-0}"
+
+    # Rate limits (5h and 7d windows) — parsed via python3 for nested JSON reliability
+    read -r FIVE_HR_PCT FIVE_HR_RESET SEVEN_DAY_PCT SEVEN_DAY_RESET <<< "$(echo "$json" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    rl=d.get('rate_limits',{})
+    fh=rl.get('five_hour',{})
+    sd=rl.get('seven_day',{})
+    print(int(fh.get('used_percentage',0)), int(fh.get('resets_at',0)), int(sd.get('used_percentage',0)), int(sd.get('resets_at',0)))
+except: print('0 0 0 0')
+" 2>/dev/null)"
+    FIVE_HR_PCT="${FIVE_HR_PCT:-0}"
+    FIVE_HR_RESET="${FIVE_HR_RESET:-0}"
+    SEVEN_DAY_PCT="${SEVEN_DAY_PCT:-0}"
+    SEVEN_DAY_RESET="${SEVEN_DAY_RESET:-0}"
+
+    # Write cache for tmux statusline
+    if [ "$FIVE_HR_RESET" -gt 0 ] || [ "$SEVEN_DAY_RESET" -gt 0 ]; then
+        printf '{"five_hr_pct":%s,"five_hr_reset":%s,"seven_day_pct":%s,"seven_day_reset":%s}\n' \
+            "$FIVE_HR_PCT" "$FIVE_HR_RESET" "$SEVEN_DAY_PCT" "$SEVEN_DAY_RESET" \
+            > "$CACHE_DIR/rate_cache.json" 2>/dev/null
+    fi
 
     # Defaults
     CWD="${CWD:-$(pwd)}"
@@ -131,8 +168,8 @@ progress_bar() {
     elif [ "$pct" -ge 70 ]; then color="\033[33m"
     else color="\033[32m"; fi
 
-    for ((i=0; i<filled; i++)); do bar+="${color}▮\033[0m"; done
-    for ((i=0; i<empty; i++)); do bar+="\033[90m▯\033[0m"; done
+    for ((i=0; i<filled; i++)); do bar+="${color}█\033[0m"; done
+    for ((i=0; i<empty; i++)); do bar+="\033[90m░\033[0m"; done
 
     echo "$bar"
 }
@@ -213,6 +250,68 @@ main() {
     model_display=$(format_model "$MODEL")
     line2+=" ${DM}|${D} 🤖 ${W}${model_display}${D}"
 
+    # Mode: Litellm or Native
+    local mode="Native"
+    if echo "${ANTHROPIC_BASE_URL:-}" | grep -qi "litellm"; then
+        mode="Litellm"
+    fi
+    line2+=" ${DM}|${D} ⚡ ${W}${mode}${D}"
+
+    # Account email + usage limits — Native mode only
+    if [ "$mode" = "Native" ]; then
+        local acct_email=""
+        if [ -f "$HOME/.claude.json" ]; then
+            acct_email=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('$HOME/.claude.json'))
+    print(d.get('oauthAccount',{}).get('emailAddress',''))
+except: pass
+" 2>/dev/null)
+        fi
+        [ -n "$acct_email" ] && line2+=" ${DM}|${D} 👤 ${W}${acct_email}${D}"
+    fi
+
+    # 5-hour usage limit (Native only)
+    if [ "$mode" = "Native" ] && ([ "$FIVE_HR_PCT" -gt 0 ] || [ "$FIVE_HR_RESET" -gt 0 ]); then
+        local usage_color
+        if [ "$FIVE_HR_PCT" -ge 90 ]; then usage_color="$R"
+        elif [ "$FIVE_HR_PCT" -ge 70 ]; then usage_color="$Y"
+        else usage_color="$G"; fi
+        local reset_str=""
+        if [ "$FIVE_HR_RESET" -gt 0 ]; then
+            local now remain_secs
+            now=$(date +%s)
+            remain_secs=$((FIVE_HR_RESET - now))
+            if [ "$remain_secs" -gt 0 ]; then
+                local rh=$((remain_secs / 3600))
+                local rm=$(( (remain_secs % 3600) / 60 ))
+                [ "$rh" -gt 0 ] && reset_str=" ${DM}resets ${rh}h${rm}m${D}" || reset_str=" ${DM}resets ${rm}m${D}"
+            fi
+        fi
+        line2+=" ${DM}|${D} 5h: ${usage_color}${FIVE_HR_PCT}%${D}${reset_str}"
+    fi
+
+    # 7-day usage limit (Native only)
+    if [ "$mode" = "Native" ] && ([ "$SEVEN_DAY_PCT" -gt 0 ] || [ "$SEVEN_DAY_RESET" -gt 0 ]); then
+        local w_color
+        if [ "$SEVEN_DAY_PCT" -ge 90 ]; then w_color="$R"
+        elif [ "$SEVEN_DAY_PCT" -ge 70 ]; then w_color="$Y"
+        else w_color="$G"; fi
+        local w_reset_str=""
+        if [ "$SEVEN_DAY_RESET" -gt 0 ]; then
+            local now remain_secs
+            now=$(date +%s)
+            remain_secs=$((SEVEN_DAY_RESET - now))
+            if [ "$remain_secs" -gt 0 ]; then
+                local rd=$((remain_secs / 86400))
+                local rh=$(( (remain_secs % 86400) / 3600 ))
+                [ "$rd" -gt 0 ] && w_reset_str=" ${DM}resets ${rd}d${rh}h${D}" || w_reset_str=" ${DM}resets ${rh}h${D}"
+            fi
+        fi
+        line2+=" ${DM}|${D} 7d: ${w_color}${SEVEN_DAY_PCT}%${D}${w_reset_str}"
+    fi
+
     # Cache hit ratio (shows prompt caching efficiency)
     local total_input=$((INPUT_TOKENS + CACHE_CREATION + CACHE_READ))
     if [ "$total_input" -gt 0 ] && [ "$CACHE_READ" -gt 0 ]; then
@@ -227,19 +326,6 @@ main() {
         line2+=" ${DM}↑${out_fmt}${D}"
     fi
 
-    # Native session cost (direct from Claude Code - no calculation needed)
-    if command -v bc >/dev/null 2>&1 || [ "$TOTAL_COST" != "0" ]; then
-        local cost_fmt
-        cost_fmt=$(format_cost "$TOTAL_COST")
-        line2+=" ${DM}|${D} ☘️ ${W}\$${cost_fmt}${D}"
-    fi
-
-    # Session duration
-    if [ "$DURATION_MS" -gt 0 ]; then
-        local dur_fmt
-        dur_fmt=$(format_duration "$DURATION_MS")
-        line2+=" ${DM}|${D} ⏱ ${DM}${dur_fmt}${D}"
-    fi
 
     echo -e "$line1"
     echo -e "$line2"

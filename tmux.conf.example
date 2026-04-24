@@ -1,0 +1,17 @@
+# Refresh status bar every 5 minutes
+set -g status-interval 300
+
+# Status bar style
+set -g status-style "bg=colour235,fg=colour255"
+set -g status-left-length 50
+set -g status-right-length 120
+
+# Left: session name
+set -g status-left "#[fg=colour82,bold] #S #[default] "
+
+# Right: Claude usage info
+set -g status-right "#($HOME/.claude/tmux-statusline.sh) #[fg=colour244] %H:%M "
+
+# Window status
+set -g window-status-current-style "fg=colour255,bold"
+set -g window-status-style "fg=colour244"

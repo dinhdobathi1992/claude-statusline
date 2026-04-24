@@ -1,67 +1,73 @@
 # claude-statusline
 
-A lightweight, dependency-free statusline script for [Claude Code](https://claude.ai/code) that displays native session metrics — context usage, model, cache efficiency, cost, and git status — directly in the Claude Code status bar.
+A statusline script for [Claude Code](https://claude.ai/code) that displays session metrics, usage limits, mode detection, and account info — directly in the Claude Code status bar.
 
-No external API. No Python. No jq. Works out of the box on macOS and Linux.
+Includes optional **tmux status bar integration** that auto-refreshes every 5 minutes.
 
 ---
 
 ## Preview
 
 ```
-📂 ~/projects/myapp  🌿 main (3)  +47 -12
-📊 143k/200k ▮▮▮▮▯▯▯▯▯▯ 48% | 🤖 Sonnet-4.5 | 💾 62% ↑3k | ☘️ $0.0031 | ⏱ 3m 5s
+📂 ~/Devops/ADI  🌿 main (3)  +86 -29
+📊 66k/200k ████░░░░░░ 33% | 🤖 Sonnet-4.6 | ⚡ Native | 👤 you@gmail.com | 5h: 14% resets 4h35m | 7d: 3% resets 6d13h | 💾 98% ↑60
 ```
 
 **Line 1** — workspace context  
-**Line 2** — session metrics
+**Line 2** — session metrics (mode-aware)
 
 ---
 
 ## What it shows
+
+### Always visible
 
 | Element | Description |
 |---|---|
 | `📂 ~/projects/myapp` | Working directory (truncated to last 2 components if long) |
 | `🌿 main (3)` | Git branch + number of staged/unstaged files changed |
 | `+47 -12` | Lines added (green) and removed (red) this session |
-| `📊 143k/200k` | Current context tokens used / context window size |
-| `▮▮▮▮▯▯▯▯▯▯ 48%` | Context window progress bar — green < 70%, yellow 70–89%, red ≥ 90% |
-| `🤖 Sonnet-4.5` | Active model (shortened display name) |
-| `💾 62%` | Prompt cache hit ratio — percentage of input tokens served from cache |
-| `↑3k` | Output tokens generated in last API call |
-| `☘️ $0.0031` | Cumulative session cost in USD (native from Claude Code, not estimated) |
-| `⏱ 3m 5s` | Elapsed wall-clock time since session started |
+| `📊 66k/200k ████░░░░░░ 33%` | Context tokens used / max + progress bar (green < 70%, yellow 70–89%, red ≥ 90%) |
+| `🤖 Sonnet-4.6` | Active model (shortened display name) |
+| `⚡ Native` or `⚡ Litellm` | API mode — detects `ANTHROPIC_BASE_URL` for LiteLLM proxy |
+| `💾 98%` | Prompt cache hit ratio |
+| `↑60` | Output tokens from last API call |
+
+### Native mode only
+
+| Element | Description |
+|---|---|
+| `👤 you@gmail.com` | Active Anthropic account email — reads from `~/.claude.json`, updates on account switch |
+| `5h: 14% resets 4h35m` | 5-hour usage window — percentage used + countdown to reset |
+| `7d: 3% resets 6d13h` | 7-day usage window — percentage used + countdown to reset |
 
 ---
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) (any recent version)
-- `bash`, `curl`, `sed`, `grep` — all pre-installed on macOS and most Linux distros
-- No Python, no jq, no Node.js required
+- [Claude Code](https://claude.ai/code) v2.1+
+- `bash`, `python3` (pre-installed on macOS)
+- For tmux integration: `tmux` 3.0+
 
 ---
 
-## Install (one command)
+## Install
 
 ```bash
 bash -c '
 set -e
-SETTINGS="$HOME/.claude/settings.json"
-ENTRY="  \"statusLine\": {\"type\": \"command\", \"command\": \"~/.claude/statusline.sh\"}"
-
 mkdir -p ~/.claude
 curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/statusline.sh" \
   -o ~/.claude/statusline.sh
 chmod +x ~/.claude/statusline.sh
-echo "✓ Downloaded statusline.sh"
+
+SETTINGS="$HOME/.claude/settings.json"
+ENTRY="  \"statusLine\": {\"type\": \"command\", \"command\": \"$HOME/.claude/statusline.sh\"}"
 
 if [ ! -f "$SETTINGS" ] || [ ! -s "$SETTINGS" ]; then
   printf "{\n%s\n}\n" "$ENTRY" > "$SETTINGS"
-  echo "✓ Created $SETTINGS"
 elif grep -q "\"statusLine\"" "$SETTINGS"; then
-  echo "✓ statusLine already configured — skipping"
+  echo "statusLine already configured — skipping"
 else
   trimmed=$(sed "s/[[:space:]]*}[[:space:]]*$//" "$SETTINGS")
   if echo "$trimmed" | grep -q "[^{[:space:]]"; then
@@ -69,104 +75,92 @@ else
   else
     printf "%s\n%s\n}\n" "$trimmed" "$ENTRY" > "$SETTINGS"
   fi
-  echo "✓ Updated $SETTINGS"
 fi
-
-echo "Done — send your next message in Claude Code to activate"
+echo "Done — send a message in Claude Code to activate"
 '
 ```
 
-The installer:
-1. Downloads `statusline.sh` to `~/.claude/statusline.sh`
-2. Makes it executable
-3. Adds the `statusLine` entry to `~/.claude/settings.json` (creates the file if it does not exist, skips safely if already configured)
+---
+
+## tmux Integration (optional)
+
+Shows Claude usage in your tmux status bar, **auto-refreshing every 5 minutes** independent of Claude Code responses.
+
+```bash
+# Download tmux statusline script
+curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/tmux-statusline.sh" \
+  -o ~/.claude/tmux-statusline.sh
+chmod +x ~/.claude/tmux-statusline.sh
+
+# Download example tmux config (or merge manually)
+curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/tmux.conf.example" \
+  -o ~/.tmux.conf
+```
+
+Or add to your existing `~/.tmux.conf`:
+
+```tmux
+set -g status-interval 300
+set -g status-right "#($HOME/.claude/tmux-statusline.sh) #[fg=colour244] %H:%M "
+```
+
+The tmux script reads from a cache file written by `statusline.sh` on each Claude Code response. The countdown timers are always computed live from the reset timestamps.
 
 ---
 
-## Manual install
+## How mode detection works
 
-```bash
-# 1. Download the script
-curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/statusline.sh" \
-  -o ~/.claude/statusline.sh
-chmod +x ~/.claude/statusline.sh
+The script checks `$ANTHROPIC_BASE_URL` at runtime:
 
-# 2. Add to ~/.claude/settings.json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/statusline.sh"
-  }
+- Contains `litellm` → displays `⚡ Litellm`, hides email and usage limits
+- Not set or no match → displays `⚡ Native`, shows email and usage limits
+
+---
+
+## How account email works
+
+The active account email is read from `~/.claude.json` (Claude Code's main config file). This file is updated automatically whenever you switch accounts via `/login`, so the displayed email is always current.
+
+---
+
+## How usage limits work
+
+Claude Code injects a `rate_limits` object into the statusline JSON on every response:
+
+```json
+"rate_limits": {
+  "five_hour":  { "used_percentage": 14, "resets_at": 1777054200 },
+  "seven_day":  { "used_percentage": 3,  "resets_at": 1777604400 }
 }
 ```
 
----
-
-## Activation
-
-No restart required. The statusline appears at the bottom of Claude Code after your **next message**. It updates automatically after every assistant response.
+The script parses this with `python3` for reliability with nested JSON. Countdown timers are computed from `resets_at` using the current system time — they are always accurate.
 
 ---
 
-## Test locally
+## JSON fields used
 
-Pipe a sample JSON payload to the script to preview the output in your terminal:
-
-```bash
-echo '{
-  "model": {"id": "claude-sonnet-4-5", "display_name": "Claude Sonnet 4.5"},
-  "workspace": {"current_dir": "'"$PWD"'"},
-  "cost": {"total_cost_usd": 0.005, "total_duration_ms": 90000, "total_lines_added": 20, "total_lines_removed": 5},
-  "context_window": {
-    "context_window_size": 200000,
-    "used_percentage": 35,
-    "current_usage": {
-      "input_tokens": 5000,
-      "output_tokens": 800,
-      "cache_creation_input_tokens": 10000,
-      "cache_read_input_tokens": 55000
-    }
-  }
-}' | ~/.claude/statusline.sh
-```
+| Field | Used for |
+|---|---|
+| `context_window.used_percentage` | Context bar |
+| `context_window.context_window_size` | Context window max |
+| `context_window.current_usage.*` | Token breakdown + cache hit ratio |
+| `model.display_name` | Model label |
+| `workspace.current_dir` | Working directory |
+| `cost.total_lines_added/removed` | Code diff stats |
+| `gitNumStagedOrUnstagedFilesChanged` | Dirty file count |
+| `rate_limits.five_hour.*` | 5h usage window |
+| `rate_limits.seven_day.*` | 7d usage window |
 
 ---
 
 ## Uninstall
 
-Remove the `statusLine` block from `~/.claude/settings.json`, or run inside Claude Code:
-
-```
-/statusline remove
-```
-
-Then optionally delete the script:
+Remove the `statusLine` block from `~/.claude/settings.json`, then:
 
 ```bash
-rm ~/.claude/statusline.sh
+rm ~/.claude/statusline.sh ~/.claude/tmux-statusline.sh
 ```
-
----
-
-## How it works
-
-Claude Code runs the script after each assistant response, piping a JSON payload to stdin. The script parses the payload with `grep`/`sed` (no external JSON tools needed), formats the output with ANSI colours, and prints two lines that Claude Code renders in the status bar.
-
-Key fields used from the Claude Code JSON context:
-
-| JSON field | Used for |
-|---|---|
-| `cost.total_cost_usd` | Session cost (native, not estimated) |
-| `cost.total_duration_ms` | Elapsed session time |
-| `cost.total_lines_added/removed` | Code diff stats |
-| `context_window.used_percentage` | Context bar percentage |
-| `context_window.context_window_size` | Context window max |
-| `context_window.current_usage.*` | Token breakdown + cache hit ratio |
-| `model.display_name` / `model.id` | Model display |
-| `workspace.current_dir` | Working directory |
-| `gitNumStagedOrUnstagedFilesChanged` | Dirty file count |
-
-Git branch is not included in the JSON payload — the script fetches it directly via `git branch --show-current` and caches the result for 5 minutes per directory.
 
 ---
 
