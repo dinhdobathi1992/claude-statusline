@@ -11,15 +11,28 @@ R="#[fg=colour196]"
 DM="#[fg=colour244,nobold]"
 D="#[default]"
 
-format_countdown() {
+format_reset_time() {
     local reset_ts="$1"
+    local window="$2"  # "5h" or "7d"
     local now remain
     now=$(date +%s)
     remain=$((reset_ts - now))
     [ "$remain" -le 0 ] && echo "now" && return
-    local rh=$(( remain / 3600 ))
-    local rm=$(( (remain % 3600) / 60 ))
-    [ "$rh" -gt 0 ] && echo "${rh}h${rm}m" || echo "${rm}m"
+    if [ "$window" = "7d" ]; then
+        python3 -c "
+from datetime import datetime
+dt = datetime.fromtimestamp($reset_ts)
+day = dt.day
+suffix = 'th' if 11 <= day <= 13 else {1:'st',2:'nd',3:'rd'}.get(day%10,'th')
+print(dt.strftime('%a ') + f'{day}{suffix} ' + dt.strftime('%b %H:%M'))
+" 2>/dev/null
+    else
+        python3 -c "
+from datetime import datetime
+dt = datetime.fromtimestamp($reset_ts)
+print(dt.strftime('%H:%M %a') + f' {dt.day} ' + dt.strftime('%b'))
+" 2>/dev/null
+    fi
 }
 
 pct_color() {
@@ -65,14 +78,14 @@ except: print('0 0 0 0')
 
         if [ "${FH_RESET:-0}" -gt 0 ]; then
             c=$(pct_color "${FH_PCT:-0}")
-            t=$(format_countdown "$FH_RESET")
-            out+=" ${DM}|${D} 5h: ${c}${FH_PCT}%${D} ${DM}${t}${D}"
+            t=$(format_reset_time "$FH_RESET" "5h")
+            out+=" ${DM}|${D} 5h: ${c}${FH_PCT}%${D} ${DM}resets at ${t}${D}"
         fi
 
         if [ "${SD_RESET:-0}" -gt 0 ]; then
             c=$(pct_color "${SD_PCT:-0}")
-            t=$(format_countdown "$SD_RESET")
-            out+=" ${DM}|${D} 7d: ${c}${SD_PCT}%${D} ${DM}${t}${D}"
+            t=$(format_reset_time "$SD_RESET" "7d")
+            out+=" ${DM}|${D} 7d: ${c}${SD_PCT}%${D} ${DM}resets at ${t}${D}"
         fi
     fi
 fi

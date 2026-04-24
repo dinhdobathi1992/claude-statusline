@@ -10,7 +10,7 @@ Includes optional **tmux status bar integration** that auto-refreshes every 5 mi
 
 ```
 📂 ~/Devops/ADI  🌿 main (3)  +86 -29
-📊 66k/200k ████░░░░░░ 33% | 🤖 Sonnet-4.6 | ⚡ Native | 👤 you@gmail.com | 5h: 14% resets 4h35m | 7d: 3% resets 6d13h | 💾 98% ↑60
+📊 66k/200k ████░░░░░░ 33% | 🤖 Sonnet-4.6 | ⚡ Native | 👤 you@gmail.com | 5h: 32% resets at 01:10 Sat 25 Apr | 7d: 4% resets at Fri 1st May 10:00 | ☘️ $0.15
 ```
 
 **Line 1** — workspace context  
@@ -30,16 +30,15 @@ Includes optional **tmux status bar integration** that auto-refreshes every 5 mi
 | `📊 66k/200k ████░░░░░░ 33%` | Context tokens used / max + progress bar (green < 70%, yellow 70–89%, red ≥ 90%) |
 | `🤖 Sonnet-4.6` | Active model (shortened display name) |
 | `⚡ Native` or `⚡ Litellm` | API mode — detects `ANTHROPIC_BASE_URL` for LiteLLM proxy |
-| `💾 98%` | Prompt cache hit ratio |
-| `↑60` | Output tokens from last API call |
+| `☘️ $0.15` | Session cost |
 
 ### Native mode only
 
 | Element | Description |
 |---|---|
 | `👤 you@gmail.com` | Active Anthropic account email — reads from `~/.claude.json`, updates on account switch |
-| `5h: 14% resets 4h35m` | 5-hour usage window — percentage used + countdown to reset |
-| `7d: 3% resets 6d13h` | 7-day usage window — percentage used + countdown to reset |
+| `5h: 32% resets at 01:10 Sat 25 Apr` | 5-hour usage window — percentage used + exact reset time |
+| `7d: 4% resets at Fri 1st May 10:00` | 7-day usage window — percentage used + exact reset date/time with ordinal suffix |
 
 ---
 
@@ -52,6 +51,8 @@ Includes optional **tmux status bar integration** that auto-refreshes every 5 mi
 ---
 
 ## Install
+
+### 1. Install the Claude Code statusline
 
 ```bash
 bash -c '
@@ -80,31 +81,44 @@ echo "Done — send a message in Claude Code to activate"
 '
 ```
 
+Send any message in Claude Code and the statusline activates immediately.
+
 ---
 
-## tmux Integration (optional)
+### 2. tmux integration (optional)
 
 Shows Claude usage in your tmux status bar, **auto-refreshing every 5 minutes** independent of Claude Code responses.
 
+**Step 1** — download the tmux script:
+
 ```bash
-# Download tmux statusline script
 curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/tmux-statusline.sh" \
   -o ~/.claude/tmux-statusline.sh
 chmod +x ~/.claude/tmux-statusline.sh
+```
 
-# Download example tmux config (or merge manually)
+**Step 2** — add to your `~/.tmux.conf` (or download the example):
+
+```bash
+# Download example config (overwrites ~/.tmux.conf)
 curl -fsSL "https://raw.githubusercontent.com/dinhdobathi1992/claude-statusline/main/tmux.conf.example" \
   -o ~/.tmux.conf
 ```
 
-Or add to your existing `~/.tmux.conf`:
+Or merge manually into your existing `~/.tmux.conf`:
 
 ```tmux
 set -g status-interval 300
 set -g status-right "#($HOME/.claude/tmux-statusline.sh) #[fg=colour244] %H:%M "
 ```
 
-The tmux script reads from a cache file written by `statusline.sh` on each Claude Code response. The countdown timers are always computed live from the reset timestamps.
+**Step 3** — reload tmux config:
+
+```bash
+tmux source-file ~/.tmux.conf
+```
+
+> The tmux script reads from a cache file written by `statusline.sh` on each Claude Code response. Reset times are always computed live from the stored Unix timestamps.
 
 ---
 
@@ -129,12 +143,17 @@ Claude Code injects a `rate_limits` object into the statusline JSON on every res
 
 ```json
 "rate_limits": {
-  "five_hour":  { "used_percentage": 14, "resets_at": 1777054200 },
-  "seven_day":  { "used_percentage": 3,  "resets_at": 1777604400 }
+  "five_hour":  { "used_percentage": 32, "resets_at": 1777054200 },
+  "seven_day":  { "used_percentage": 4,  "resets_at": 1777604400 }
 }
 ```
 
-The script parses this with `python3` for reliability with nested JSON. Countdown timers are computed from `resets_at` using the current system time — they are always accurate.
+The `resets_at` Unix timestamp is converted to a human-readable local time using `python3`:
+
+- **5h window:** `01:10 Sat 25 Apr`
+- **7d window:** `Fri 1st May 10:00` (with ordinal suffix — 1st, 2nd, 3rd, 11th, 21st, etc.)
+
+Works on macOS and Linux.
 
 ---
 
@@ -144,9 +163,10 @@ The script parses this with `python3` for reliability with nested JSON. Countdow
 |---|---|
 | `context_window.used_percentage` | Context bar |
 | `context_window.context_window_size` | Context window max |
-| `context_window.current_usage.*` | Token breakdown + cache hit ratio |
+| `context_window.current_usage.*` | Token breakdown |
 | `model.display_name` | Model label |
 | `workspace.current_dir` | Working directory |
+| `cost.total_cost_usd` | Session cost |
 | `cost.total_lines_added/removed` | Code diff stats |
 | `gitNumStagedOrUnstagedFilesChanged` | Dirty file count |
 | `rate_limits.five_hour.*` | 5h usage window |
