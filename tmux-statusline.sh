@@ -47,6 +47,8 @@ out=""
 # Mode
 if echo "${ANTHROPIC_BASE_URL:-}" | grep -qi "litellm"; then
     mode="Litellm"
+elif echo "${ANTHROPIC_BASE_URL:-}" | grep -q "20128"; then
+    mode="9router"
 else
     mode="Native"
 fi

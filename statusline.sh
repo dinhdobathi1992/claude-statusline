@@ -250,10 +250,12 @@ main() {
     model_display=$(format_model "$MODEL")
     line2+=" ${DM}|${D} 🤖 ${W}${model_display}${D}"
 
-    # Mode: Litellm or Native
+    # Mode: Litellm, 9router, or Native
     local mode="Native"
     if echo "${ANTHROPIC_BASE_URL:-}" | grep -qi "litellm"; then
         mode="Litellm"
+    elif echo "${ANTHROPIC_BASE_URL:-}" | grep -q "20128"; then
+        mode="9router"
     fi
     line2+=" ${DM}|${D} ⚡ ${W}${mode}${D}"
 
